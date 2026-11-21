@@ -1,0 +1,235 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>GraphFlow — Database Schema</title>
+<style>
+@page{size:A4 landscape;margin:12mm}
+*{box-sizing:border-box}
+body{margin:0;font-family:Segoe UI,system-ui,Arial,sans-serif;color:#0f172a;font-size:11px;background:#fff}
+.cover{padding:26mm 8mm 10mm;border-bottom:4px solid #4f46e5;page-break-after:always}
+.cover h1{font-size:34px;margin:0 0 6px;color:#1e1b4b}
+.cover p{font-size:14px;color:#475569;max-width:760px;line-height:1.5}
+.stats{display:flex;gap:14px;margin:22px 0}
+.stat{border:1px solid #e2e8f0;border-radius:8px;padding:12px 18px;min-width:130px}
+.stat b{display:block;font-size:26px;color:#4f46e5}
+.legend{margin-top:18px;line-height:2}
+.b{display:inline-block;padding:1px 7px;border-radius:10px;font-size:9.5px;font-weight:600;white-space:nowrap}
+.pk{background:#fef3c7;color:#92400e}.fk{background:#dbeafe;color:#1e40af}.uq{background:#ede9fe;color:#5b21b6}
+.group{margin-bottom:8px}
+h2{font-size:16px;color:#fff;background:var(--c);margin:0 0 8px;padding:7px 12px;border-radius:6px;display:flex;justify-content:space-between;align-items:center;break-after:avoid}
+h2 small{font-weight:400;opacity:.85;font-size:11px}
+.tbl{margin:0 0 10px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;break-inside:avoid}
+.th{background:#f1f5f9;padding:6px 10px;border-bottom:2px solid var(--c);display:flex;gap:10px;align-items:baseline}
+.th b{font-size:12.5px;color:var(--c);font-family:Consolas,monospace}
+.th span{color:#475569}
+table{width:100%;border-collapse:collapse}
+th{background:#f8fafc;text-align:left;padding:4px 10px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+td{padding:3.5px 10px;border-top:1px solid #eef2f7;vertical-align:top}
+tr:nth-child(even) td{background:#fafbfd}
+.mono{font-family:Consolas,monospace;font-size:10.5px}.type{color:#0f766e}
+.page2{page-break-before:always}
+.plain{width:100%;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;margin-bottom:14px}
+.plain th{background:#1e1b4b;color:#fff;padding:6px 10px}
+h3{font-size:15px;color:#1e1b4b;margin:6px 0 8px}
+.note{background:#eff6ff;border-left:4px solid #3b82f6;padding:8px 12px;margin:8px 0 14px;border-radius:4px}
+</style></head><body>
+<div class="cover">
+  <h1>GraphFlow — Database Schema</h1>
+  <p>Creative workflow intelligence and billable-hour optimization. Relational schema of the implemented system on PostgreSQL 16: employees' work activity is recorded as events, reconstructed into time intervals, turned into timesheets, approved by managers and billed per project.</p>
+  <div class="stats">
+    <div class="stat"><b>23</b>tables</div>
+    <div class="stat"><b>4</b>functional areas</div>
+    <div class="stat"><b>PostgreSQL 16</b>database</div>
+    <div class="stat"><b>RLS</b>tenant isolation</div>
+  </div>
+  <div class="legend"><b>How to read the tables</b><br>
+    <span class="b pk">PK</span> primary key &nbsp; <span class="b fk">FK → table</span> foreign key &nbsp; <span class="b uq">UQ</span> unique<br>
+    All ids are UUID · timestamps are timestamptz (UTC) · durations are whole seconds · money is DECIMAL.<br>
+    Every tenant table also has <span class="mono">organization_id</span> (FK → organizations) and Row-Level Security.</div>
+</div>
+
+  <section class="group" style="--c:#4f46e5">
+    <h2><span>1. Tenancy and identity</span><small>7 tables</small></h2>
+    
+      <div class="tbl">
+        <div class="th"><b>organizations</b><span>A tenant (company). Everything else belongs to one organization.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">name</td><td class="mono type">text</td><td></td><td>NOT NULL</td></tr><tr><td class="mono">slug</td><td class="mono type">text</td><td><span class="b uq">UQ</span></td><td>NOT NULL</td></tr><tr><td class="mono">timezone</td><td class="mono type">text</td><td></td><td>IANA name, default UTC; used for reports</td></tr><tr><td class="mono">is_demo</td><td class="mono type">boolean</td><td></td><td>default false</td></tr><tr><td class="mono">created_at / updated_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>organization_settings</b><span>One settings row per organization (thresholds, retention).</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span> <span class="b fk">FK → organizations</span></td><td>1:1, cascade delete</td></tr><tr><td class="mono">deep_focus_min_minutes</td><td class="mono type">int</td><td></td><td>default 25, CHECK 1–480</td></tr><tr><td class="mono">deep_focus_max_gap_minutes</td><td class="mono type">int</td><td></td><td>default 2, CHECK 0–60</td></tr><tr><td class="mono">idle_timeout_minutes</td><td class="mono type">int</td><td></td><td>default 5</td></tr><tr><td class="mono">heartbeat_timeout_minutes</td><td class="mono type">int</td><td></td><td>default 5</td></tr><tr><td class="mono">context_switch_threshold_per_hour</td><td class="mono type">int</td><td></td><td>default 6</td></tr><tr><td class="mono">context_switch_cost_seconds</td><td class="mono type">int</td><td></td><td>default 120</td></tr><tr><td class="mono">budget_alert_threshold_pct</td><td class="mono type">int</td><td></td><td>default 80, CHECK 1–100</td></tr><tr><td class="mono">raw_event_retention_days</td><td class="mono type">int</td><td></td><td>default 90</td></tr><tr><td class="mono">audit_log_retention_days</td><td class="mono type">int</td><td></td><td>default 730, CHECK ≥ 30</td></tr><tr><td class="mono">default_currency</td><td class="mono type">text</td><td></td><td>default USD</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>users</b><span>Employees and managers who can sign in.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">team_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → teams</span></td><td>set null on delete</td></tr><tr><td class="mono">display_name</td><td class="mono type">text</td><td></td><td>NOT NULL</td></tr><tr><td class="mono">email</td><td class="mono type">text</td><td><span class="b uq">UQ</span></td><td>NOT NULL, CHECK lowercase</td></tr><tr><td class="mono">password_hash</td><td class="mono type">text</td><td></td><td>Argon2id; never returned by the app</td></tr><tr><td class="mono">role</td><td class="mono type">enum</td><td></td><td>SUPER_ADMIN, ORG_ADMIN, PROJECT_MANAGER, TEAM_LEAD, EMPLOYEE</td></tr><tr><td class="mono">is_active</td><td class="mono type">boolean</td><td></td><td>default true</td></tr><tr><td class="mono">tracking_consent</td><td class="mono type">boolean</td><td></td><td>default false</td></tr><tr><td class="mono">consent_updated_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr><tr><td class="mono">last_login_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>teams</b><span>A group of employees with a manager.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">name</td><td class="mono type">text</td><td><span class="b uq">UQ (with organization_id)</span></td><td>NOT NULL</td></tr><tr><td class="mono">description</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">manager_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>set null on delete</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>auth_sessions</b><span>Server-side login sessions.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>cascade</td></tr><tr><td class="mono">token_hash</td><td class="mono type">text</td><td><span class="b uq">UQ</span></td><td>HMAC of the cookie token (token itself never stored)</td></tr><tr><td class="mono">expires_at</td><td class="mono type">timestamptz</td><td></td><td>NOT NULL</td></tr><tr><td class="mono">revoked_at</td><td class="mono type">timestamptz</td><td></td><td>set on logout</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>password_reset_tokens</b><span>Single-use reset links.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>cascade</td></tr><tr><td class="mono">token_hash</td><td class="mono type">text</td><td><span class="b uq">UQ</span></td><td></td></tr><tr><td class="mono">expires_at</td><td class="mono type">timestamptz</td><td></td><td>30 minutes</td></tr><tr><td class="mono">used_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>invitations</b><span>Invitations to join an organization.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">invited_by_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td></td></tr><tr><td class="mono">email</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">role</td><td class="mono type">enum</td><td></td><td>role the invitee will get</td></tr><tr><td class="mono">team_id</td><td class="mono type">uuid</td><td></td><td>optional</td></tr><tr><td class="mono">token_hash</td><td class="mono type">text</td><td><span class="b uq">UQ</span></td><td></td></tr><tr><td class="mono">expires_at / accepted_at / revoked_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+  </section>
+  <section class="group" style="--c:#0d9488">
+    <h2><span>2. Projects, tools, files and devices</span><small>6 tables</small></h2>
+    
+      <div class="tbl">
+        <div class="th"><b>projects</b><span>A billable piece of client work.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">team_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → teams</span></td><td>set null</td></tr><tr><td class="mono">project_manager_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>set null</td></tr><tr><td class="mono">name</td><td class="mono type">text</td><td><span class="b uq">UQ (with organization_id)</span></td><td>NOT NULL</td></tr><tr><td class="mono">client_name</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">budget_hours</td><td class="mono type">decimal(10,2)</td><td></td><td>CHECK ≥ 0</td></tr><tr><td class="mono">hourly_rate</td><td class="mono type">decimal(12,2)</td><td></td><td>CHECK ≥ 0</td></tr><tr><td class="mono">currency</td><td class="mono type">text</td><td></td><td>default USD</td></tr><tr><td class="mono">status</td><td class="mono type">enum</td><td></td><td>PLANNING, ACTIVE, ON_HOLD, COMPLETED, ARCHIVED</td></tr><tr><td class="mono">start_date / deadline</td><td class="mono type">date</td><td></td><td>CHECK deadline ≥ start</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>project_members</b><span>Which employees are assigned to which project (many-to-many link).</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td>cascade; UQ with user_id</td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>cascade</td></tr><tr><td class="mono">assigned_role</td><td class="mono type">text</td><td></td><td>default Contributor</td></tr><tr><td class="mono">assigned_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>project_billing_configs</b><span>Billing rules of one project.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span> <span class="b fk">FK → projects</span></td><td>1:1</td></tr><tr><td class="mono">billable_categories</td><td class="mono type">enum[]</td><td></td><td>DEEP_FOCUS, ACTIVE_WORK</td></tr><tr><td class="mono">collaboration_billable</td><td class="mono type">boolean</td><td></td><td></td></tr><tr><td class="mono">administrative_billable</td><td class="mono type">boolean</td><td></td><td></td></tr><tr><td class="mono">billable_tool_ids / non_billable_tool_ids</td><td class="mono type">uuid[]</td><td></td><td>tool overrides</td></tr><tr><td class="mono">rounding_rule</td><td class="mono type">enum</td><td></td><td>NONE, UP_6_MIN, UP_15_MIN, NEAREST_15_MIN</td></tr><tr><td class="mono">requires_approval</td><td class="mono type">boolean</td><td></td><td>default true</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>tools</b><span>Applications people use (Figma, VS Code, Slack…).</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">name</td><td class="mono type">text</td><td><span class="b uq">UQ (with organization_id)</span></td><td></td></tr><tr><td class="mono">category</td><td class="mono type">enum</td><td></td><td>DESIGN, DEVELOPMENT, THREE_D, BROWSER, COMMUNICATION, PRODUCTIVITY, DOCUMENTATION, OTHER</td></tr><tr><td class="mono">executable_name</td><td class="mono type">text</td><td><span class="b uq">UQ (with organization_id)</span></td><td>e.g. Figma.exe</td></tr><tr><td class="mono">default_billable_status</td><td class="mono type">boolean</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>files</b><span>File metadata only. Contents are never stored.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td>set null</td></tr><tr><td class="mono">tool_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → tools</span></td><td>set null</td></tr><tr><td class="mono">created_by</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>set null</td></tr><tr><td class="mono">file_name</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">file_path</td><td class="mono type">text</td><td><span class="b uq">UQ (with organization_id)</span></td><td></td></tr><tr><td class="mono">file_type</td><td class="mono type">text</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>devices</b><span>A collector (real or simulated) registered to a user.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>cascade; UQ with name</td></tr><tr><td class="mono">name</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">platform</td><td class="mono type">text</td><td></td><td>default web-simulator</td></tr><tr><td class="mono">is_simulated</td><td class="mono type">boolean</td><td></td><td></td></tr><tr><td class="mono">is_active</td><td class="mono type">boolean</td><td></td><td></td></tr><tr><td class="mono">token_hash</td><td class="mono type">text</td><td><span class="b uq">UQ</span></td><td>for a future desktop agent</td></tr><tr><td class="mono">last_seen_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+  </section>
+  <section class="group" style="--c:#d97706">
+    <h2><span>3. Event pipeline</span><small>6 tables</small></h2>
+    
+      <div class="tbl">
+        <div class="th"><b>activity_sessions</b><span>One continuous working session on one device.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td>generated by the collector</td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td></td></tr><tr><td class="mono">device_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → devices</span></td><td></td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td>main project, set null</td></tr><tr><td class="mono">status</td><td class="mono type">enum</td><td></td><td>OPEN, CLOSED, TIMED_OUT</td></tr><tr><td class="mono">started_at / last_event_at / ended_at</td><td class="mono type">timestamptz</td><td></td><td>CHECK last_event_at ≥ started_at</td></tr><tr><td class="mono">tracked / active / idle / deep_focus seconds, context_switch_count</td><td class="mono type">int</td><td></td><td>aggregates written by the worker</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>raw_activity_events</b><span>Every event exactly as received (JSON).</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">client_event_id</td><td class="mono type">uuid</td><td><span class="b uq">UQ (with organization_id)</span></td><td>blocks duplicate events</td></tr><tr><td class="mono">user_id / device_id / session_id</td><td class="mono type">uuid</td><td><span class="b fk">FK</span></td><td></td></tr><tr><td class="mono">simulation_run_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → simulation_runs</span></td><td>optional</td></tr><tr><td class="mono">event_type</td><td class="mono type">enum</td><td></td><td>APP_OPENED, APP_CLOSED, APPLICATION_SWITCH, FILE_CONTEXT_CHANGED, FOCUS_STARTED, FOCUS_ENDED, IDLE_STARTED, IDLE_ENDED, PROJECT_CHANGED, SESSION_HEARTBEAT</td></tr><tr><td class="mono">event_timestamp</td><td class="mono type">timestamptz</td><td></td><td>indexed</td></tr><tr><td class="mono">sequence</td><td class="mono type">int</td><td></td><td>tie-breaker</td></tr><tr><td class="mono">payload</td><td class="mono type">jsonb</td><td></td><td>raw packet</td></tr><tr><td class="mono">processing_status</td><td class="mono type">enum</td><td></td><td>PENDING, PROCESSING, PROCESSED, RETRYING, FAILED, SKIPPED</td></tr><tr><td class="mono">attempts</td><td class="mono type">int</td><td></td><td>CHECK ≥ 0</td></tr><tr><td class="mono">received_at / processed_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr><tr><td class="mono">last_error</td><td class="mono type">text</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>activity_event_inbox</b><span>Processing ledger, one row per raw event.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">source_event_id</td><td class="mono type">uuid</td><td><span class="b fk">FK</span> <span class="b uq">UQ → raw_activity_events</span></td><td>1:1, cascade</td></tr><tr><td class="mono">processing_status</td><td class="mono type">enum</td><td></td><td></td></tr><tr><td class="mono">attempts</td><td class="mono type">int</td><td></td><td></td></tr><tr><td class="mono">enqueued_at</td><td class="mono type">timestamptz</td><td></td><td>used by the recovery scan</td></tr><tr><td class="mono">last_error</td><td class="mono type">text</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>focus_events</b><span>Clean, non-overlapping time intervals (main analytics table).</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">user_id / device_id / session_id / source_event_id</td><td class="mono type">uuid</td><td><span class="b fk">FK</span></td><td></td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td>optional</td></tr><tr><td class="mono">tool_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → tools</span></td><td>optional</td></tr><tr><td class="mono">file_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → files</span></td><td>optional</td></tr><tr><td class="mono">started_at / ended_at</td><td class="mono type">timestamptz</td><td></td><td>CHECK ended_at &gt; started_at</td></tr><tr><td class="mono">duration_seconds</td><td class="mono type">int</td><td></td><td>CHECK &gt; 0</td></tr><tr><td class="mono">idle_duration_seconds</td><td class="mono type">int</td><td></td><td>CHECK ≤ duration</td></tr><tr><td class="mono">activity_category</td><td class="mono type">enum</td><td></td><td>DEEP_FOCUS, ACTIVE_WORK, COLLABORATION, ADMINISTRATIVE, IDLE, UNASSIGNED</td></tr><tr><td class="mono">is_idle / is_billable / is_context_switch / is_simulated</td><td class="mono type">boolean</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>collaboration_links</b><span>Two employees working together on a project.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">source_user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td></td></tr><tr><td class="mono">target_user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>CHECK ≠ source</td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td></td></tr><tr><td class="mono">source_session_id / target_session_id</td><td class="mono type">uuid</td><td></td><td></td></tr><tr><td class="mono">interaction_type</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">started_at / ended_at</td><td class="mono type">timestamptz</td><td></td><td>CHECK ended_at &gt; started_at</td></tr><tr><td class="mono">duration_seconds</td><td class="mono type">int</td><td></td><td>CHECK &gt; 0</td></tr><tr><td class="mono">context_switch_count</td><td class="mono type">int</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>simulation_runs</b><span>A run of the development simulator.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">actor_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>who pressed start</td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>simulated employee</td></tr><tr><td class="mono">device_id / project_id</td><td class="mono type">uuid</td><td></td><td></td></tr><tr><td class="mono">scenario</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">speed</td><td class="mono type">int</td><td></td><td></td></tr><tr><td class="mono">status</td><td class="mono type">enum</td><td></td><td>RUNNING, PAUSED, STOPPED, COMPLETED</td></tr></tbody>
+        </table>
+      </div>
+  </section>
+  <section class="group" style="--c:#be185d">
+    <h2><span>4. Billing and audit</span><small>4 tables</small></h2>
+    
+      <div class="tbl">
+        <div class="th"><b>timesheets</b><span>Hours billed per user, project and period.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>owner</td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td></td></tr><tr><td class="mono">reviewed_by</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>manager; never the owner</td></tr><tr><td class="mono">reporting_period_start / _end</td><td class="mono type">timestamptz</td><td></td><td>UQ with user_id + project_id; CHECK end &gt; start</td></tr><tr><td class="mono">tracked / billable / non_billable seconds</td><td class="mono type">int</td><td></td><td>CHECK ≥ 0, billable ≤ tracked</td></tr><tr><td class="mono">calculated_billable_seconds</td><td class="mono type">int</td><td></td><td>value before any adjustment</td></tr><tr><td class="mono">hourly_rate</td><td class="mono type">decimal(12,2)</td><td></td><td>snapshot of the project rate</td></tr><tr><td class="mono">billable_amount</td><td class="mono type">decimal(14,2)</td><td></td><td>CHECK ≥ 0</td></tr><tr><td class="mono">status</td><td class="mono type">enum</td><td></td><td>DRAFT, SUBMITTED, APPROVED, REJECTED, ADJUSTMENT_REQUIRED</td></tr><tr><td class="mono">submitted_at / reviewed_at</td><td class="mono type">timestamptz</td><td></td><td></td></tr><tr><td class="mono">rejection_reason / notes</td><td class="mono type">text</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>billing_adjustments</b><span>Append-only history of billable-time changes.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">timesheet_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → timesheets</span></td><td>cascade</td></tr><tr><td class="mono">adjusted_by</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td></td></tr><tr><td class="mono">previous_billable_seconds</td><td class="mono type">int</td><td></td><td></td></tr><tr><td class="mono">adjusted_billable_seconds</td><td class="mono type">int</td><td></td><td></td></tr><tr><td class="mono">reason</td><td class="mono type">text</td><td></td><td>NOT NULL, cannot be blank</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>billable_audits</b><span>Snapshot of tracked, billable and approved time per project and period.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → projects</span></td><td></td></tr><tr><td class="mono">user_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>optional</td></tr><tr><td class="mono">reporting_period_start / _end</td><td class="mono type">timestamptz</td><td></td><td>CHECK end &gt; start</td></tr><tr><td class="mono">total tracked / deep focus / active / idle / friction / billable / non-billable seconds</td><td class="mono type">int</td><td></td><td></td></tr><tr><td class="mono">approved_billable_seconds</td><td class="mono type">int</td><td></td><td>only approved timesheets</td></tr><tr><td class="mono">context_switch_count</td><td class="mono type">int</td><td></td><td></td></tr><tr><td class="mono">billable_amount</td><td class="mono type">decimal(14,2)</td><td></td><td></td></tr><tr><td class="mono">budget_utilization_percentage</td><td class="mono type">decimal(7,2)</td><td></td><td></td></tr></tbody>
+        </table>
+      </div>
+      <div class="tbl">
+        <div class="th"><b>audit_logs</b><span>Append-only record of every important action.</span></div>
+        <table>
+          <thead><tr><th style="width:27%">Column</th><th style="width:12%">Type</th><th style="width:20%">Key</th><th>Constraints / notes</th></tr></thead>
+          <tbody><tr><td class="mono">id</td><td class="mono type">uuid</td><td><span class="b pk">PK</span></td><td></td></tr><tr><td class="mono">organization_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → organizations</span></td><td>Tenant owner; protected by Row-Level Security</td></tr><tr><td class="mono">actor_id</td><td class="mono type">uuid</td><td><span class="b fk">FK → users</span></td><td>set null</td></tr><tr><td class="mono">action</td><td class="mono type">text</td><td></td><td>e.g. timesheet.approved</td></tr><tr><td class="mono">entity_type / entity_id</td><td class="mono type">text</td><td></td><td></td></tr><tr><td class="mono">project_id</td><td class="mono type">uuid</td><td></td><td>lets managers see their project history</td></tr><tr><td class="mono">metadata</td><td class="mono type">jsonb</td><td></td><td></td></tr><tr><td class="mono">request_id</td><td class="mono type">text</td><td></td><td>links to the API request</td></tr></tbody>
+        </table>
+      </div>
+  </section>
+<div class="page2"></div>
+<h3>5. Relationship summary</h3>
+<table class="plain"><thead><tr><th>Parent</th><th>Child</th><th>Cardinality</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>organizations</td><td>users, teams, projects, tools, devices …</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Tenant ownership (every table)</td></tr><tr><td>organizations</td><td>organization_settings</td><td style="font-weight:700;color:#4f46e5">1 : 1</td><td>Settings</td></tr><tr><td>teams</td><td>users</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Team membership (users.team_id)</td></tr><tr><td>users</td><td>teams</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Team manager (teams.manager_id)</td></tr><tr><td>teams</td><td>projects</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Owning team</td></tr><tr><td>users</td><td>projects</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Project manager</td></tr><tr><td>projects ↔ users</td><td>project_members</td><td style="font-weight:700;color:#4f46e5">M : N</td><td>Assignment (associative table)</td></tr><tr><td>projects</td><td>project_billing_configs</td><td style="font-weight:700;color:#4f46e5">1 : 1</td><td>Billing rules</td></tr><tr><td>tools</td><td>files, focus_events</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Application used</td></tr><tr><td>users</td><td>devices</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Collectors</td></tr><tr><td>devices</td><td>activity_sessions</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Sessions per device</td></tr><tr><td>activity_sessions</td><td>raw_activity_events</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Events received</td></tr><tr><td>raw_activity_events</td><td>activity_event_inbox</td><td style="font-weight:700;color:#4f46e5">1 : 0..1</td><td>Processing ledger</td></tr><tr><td>activity_sessions</td><td>focus_events</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Reconstructed intervals</td></tr><tr><td>users ↔ users</td><td>collaboration_links</td><td style="font-weight:700;color:#4f46e5">M : N</td><td>Per project</td></tr><tr><td>users, projects</td><td>timesheets</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Billing record</td></tr><tr><td>timesheets</td><td>billing_adjustments</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Change history</td></tr><tr><td>projects</td><td>billable_audits</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Snapshots</td></tr><tr><td>users</td><td>audit_logs</td><td style="font-weight:700;color:#4f46e5">1 : N</td><td>Who did it</td></tr>
+</tbody></table>
+<h3>6. Access rules (enforced by PostgreSQL Row-Level Security)</h3>
+<table class="plain"><thead><tr><th>Role</th><th>Can read</th><th>Can change</th></tr></thead><tbody>
+<tr><td>Employee</td><td>Own activity, sessions and timesheets</td><td>Own profile (not role, team, status or email); own draft timesheets</td></tr><tr><td>Team lead</td><td>Activity of own team members</td><td>—</td></tr><tr><td>Project manager</td><td>Projects they manage and activity on them</td><td>Edit own projects, assign members, review timesheets of own projects (never own)</td></tr><tr><td>Org admin</td><td>Whole organization</td><td>Users, teams, tools, settings; review any timesheet except own</td></tr><tr><td>Worker (system)</td><td>One organization at a time</td><td>Normalized events, sessions, collaboration links</td></tr>
+</tbody></table>
+<div class="note"><b>Database-level protections:</b> the audit log and billing adjustments are append-only; approved timesheets cannot be changed; nobody can approve their own timesheet; employees cannot change their own role; the application connects with a restricted role that cannot bypass these rules.</div>
+</body></html>

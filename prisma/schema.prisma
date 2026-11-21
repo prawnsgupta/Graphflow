@@ -1,0 +1,727 @@
+// GraphFlow database schema.
+//
+// - PostgreSQL is the authoritative source of truth.
+// - All tenant tables carry organization_id and are protected by Row-Level
+//   Security (see prisma/migrations/*_rls). The app connects as the restricted
+//   `graphflow_app` role; migrations run as the owner role (directUrl).
+// - Durations are stored as integer seconds. Money uses DECIMAL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("MIGRATION_DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  SUPER_ADMIN
+  ORG_ADMIN
+  PROJECT_MANAGER
+  TEAM_LEAD
+  EMPLOYEE
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum ToolCategory {
+  DESIGN
+  DEVELOPMENT
+  THREE_D
+  BROWSER
+  COMMUNICATION
+  PRODUCTIVITY
+  DOCUMENTATION
+  OTHER
+}
+
+enum ActivityEventType {
+  APP_OPENED
+  APP_CLOSED
+  APPLICATION_SWITCH
+  FILE_CONTEXT_CHANGED
+  FOCUS_STARTED
+  FOCUS_ENDED
+  IDLE_STARTED
+  IDLE_ENDED
+  PROJECT_CHANGED
+  SESSION_HEARTBEAT
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  RETRYING
+  FAILED
+  SKIPPED
+}
+
+enum ActivityCategory {
+  DEEP_FOCUS
+  ACTIVE_WORK
+  COLLABORATION
+  ADMINISTRATIVE
+  IDLE
+  UNASSIGNED
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+  TIMED_OUT
+}
+
+enum TimesheetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  ADJUSTMENT_REQUIRED
+}
+
+enum RoundingRule {
+  NONE
+  UP_6_MIN
+  UP_15_MIN
+  NEAREST_15_MIN
+}
+
+enum SimulationStatus {
+  RUNNING
+  PAUSED
+  STOPPED
+  COMPLETED
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy, identity and access
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  timezone  String   @default("UTC")
+  isDemo    Boolean  @default(false) @map("is_demo")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  settings          OrganizationSettings?
+  users             User[]
+  teams             Team[]
+  projects          Project[]
+  tools             Tool[]
+  files             File[]
+  devices           Device[]
+  rawEvents         RawActivityEvent[]
+  inbox             ActivityEventInbox[]
+  sessions          ActivitySession[]
+  focusEvents       FocusEvent[]
+  collaborations    CollaborationLink[]
+  billableAudits    BillableAudit[]
+  timesheets        Timesheet[]
+  auditLogs         AuditLog[]
+  invitations       Invitation[]
+  simulationRuns    SimulationRun[]
+  billingConfigs    ProjectBillingConfig[]
+  billingAdjustment BillingAdjustment[]
+
+  @@map("organizations")
+}
+
+/// Organization-wide analytics and retention configuration.
+model OrganizationSettings {
+  organizationId                String   @id @map("organization_id") @db.Uuid
+  deepFocusMinMinutes           Int      @default(25) @map("deep_focus_min_minutes")
+  deepFocusMaxGapMinutes        Int      @default(2) @map("deep_focus_max_gap_minutes")
+  idleTimeoutMinutes            Int      @default(5) @map("idle_timeout_minutes")
+  heartbeatTimeoutMinutes       Int      @default(5) @map("heartbeat_timeout_minutes")
+  contextSwitchThresholdPerHour Int      @default(6) @map("context_switch_threshold_per_hour")
+  contextSwitchCostSeconds      Int      @default(120) @map("context_switch_cost_seconds")
+  fragmentThresholdSeconds      Int      @default(120) @map("fragment_threshold_seconds")
+  fragmentMinCountPerHour       Int      @default(3) @map("fragment_min_count_per_hour")
+  budgetAlertThresholdPct       Int      @default(80) @map("budget_alert_threshold_pct")
+  rawEventRetentionDays         Int      @default(90) @map("raw_event_retention_days")
+  auditLogRetentionDays         Int      @default(730) @map("audit_log_retention_days")
+  defaultCurrency               String   @default("USD") @map("default_currency")
+  updatedAt                     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_settings")
+}
+
+model User {
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  displayName      String    @map("display_name")
+  email            String    @unique
+  passwordHash     String?   @map("password_hash")
+  role             UserRole  @default(EMPLOYEE)
+  teamId           String?   @map("team_id") @db.Uuid
+  title            String?
+  isActive         Boolean   @default(true) @map("is_active")
+  trackingConsent  Boolean   @default(false) @map("tracking_consent")
+  consentUpdatedAt DateTime? @map("consent_updated_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(3)
+
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team               Team?               @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
+  managedTeams       Team[]              @relation("TeamManager")
+  managedProjects    Project[]           @relation("ProjectManager")
+  projectMemberships ProjectMember[]
+  devices            Device[]
+  authSessions       AuthSession[]
+  rawEvents          RawActivityEvent[]
+  activitySessions   ActivitySession[]
+  focusEvents        FocusEvent[]
+  collabSource       CollaborationLink[] @relation("CollabSource")
+  collabTarget       CollaborationLink[] @relation("CollabTarget")
+  billableAudits     BillableAudit[]
+  timesheets         Timesheet[]         @relation("TimesheetOwner")
+  reviewedTimesheets Timesheet[]         @relation("TimesheetReviewer")
+  adjustments        BillingAdjustment[]
+  auditLogs          AuditLog[]
+  filesCreated       File[]
+  resetTokens        PasswordResetToken[]
+  invitationsSent    Invitation[]
+  simulationRuns     SimulationRun[]     @relation("SimulationTarget")
+  simulationsStarted SimulationRun[]     @relation("SimulationActor")
+
+  @@index([organizationId])
+  @@index([organizationId, role])
+  @@index([teamId])
+  @@map("users")
+}
+
+/// Server-side login sessions. The cookie holds a random token; only its
+/// HMAC is stored, so a database leak does not reveal usable tokens.
+model AuthSession {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  userAgent      String?   @map("user_agent")
+  ipAddress      String?   @map("ip_address")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model PasswordResetToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt         DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model Invitation {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  email          String
+  displayName    String?   @map("display_name")
+  role           UserRole  @default(EMPLOYEE)
+  teamId         String?   @map("team_id") @db.Uuid
+  tokenHash      String    @unique @map("token_hash")
+  invitedById    String    @map("invited_by_id") @db.Uuid
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  acceptedAt     DateTime? @map("accepted_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, email])
+  @@map("invitations")
+}
+
+model Team {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  description    String?
+  managerId      String?  @map("manager_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  manager      User?        @relation("TeamManager", fields: [managerId], references: [id], onDelete: SetNull)
+  members      User[]       @relation("TeamMembers")
+  projects     Project[]
+
+  @@unique([organizationId, name])
+  @@index([managerId])
+  @@map("teams")
+}
+
+// ---------------------------------------------------------------------------
+// Projects, tools, files, devices
+// ---------------------------------------------------------------------------
+
+model Project {
+  id               String        @id @default(uuid()) @db.Uuid
+  organizationId   String        @map("organization_id") @db.Uuid
+  teamId           String?       @map("team_id") @db.Uuid
+  projectManagerId String?       @map("project_manager_id") @db.Uuid
+  name             String
+  description      String?
+  clientName       String?       @map("client_name")
+  budgetHours      Decimal       @default(0) @map("budget_hours") @db.Decimal(10, 2)
+  hourlyRate       Decimal       @default(0) @map("hourly_rate") @db.Decimal(12, 2)
+  currency         String        @default("USD")
+  status           ProjectStatus @default(PLANNING)
+  startDate        DateTime?     @map("start_date") @db.Date
+  deadline         DateTime?     @db.Date
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team           Team?                 @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  projectManager User?                 @relation("ProjectManager", fields: [projectManagerId], references: [id], onDelete: SetNull)
+  members        ProjectMember[]
+  billingConfig  ProjectBillingConfig?
+  files          File[]
+  focusEvents    FocusEvent[]
+  sessions       ActivitySession[]
+  collaborations CollaborationLink[]
+  billableAudits BillableAudit[]
+  timesheets     Timesheet[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+  @@index([teamId])
+  @@index([projectManagerId])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  projectId    String   @map("project_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  assignedRole String   @default("Contributor") @map("assigned_role")
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+/// Project-level billing rules. Missing row => organization defaults.
+model ProjectBillingConfig {
+  projectId                String             @id @map("project_id") @db.Uuid
+  organizationId           String             @map("organization_id") @db.Uuid
+  billableCategories       ActivityCategory[] @default([DEEP_FOCUS, ACTIVE_WORK]) @map("billable_categories")
+  collaborationBillable    Boolean            @default(true) @map("collaboration_billable")
+  administrativeBillable   Boolean            @default(false) @map("administrative_billable")
+  /// Tool ids that are always billable on this project (overrides tool default)
+  billableToolIds          String[]           @default([]) @map("billable_tool_ids") @db.Uuid
+  /// Tool ids that are never billable on this project (overrides tool default)
+  nonBillableToolIds       String[]           @default([]) @map("non_billable_tool_ids") @db.Uuid
+  roundingRule             RoundingRule       @default(NONE) @map("rounding_rule")
+  requiresApproval         Boolean            @default(true) @map("requires_approval")
+  updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("project_billing_configs")
+}
+
+model Tool {
+  id                    String       @id @default(uuid()) @db.Uuid
+  organizationId        String       @map("organization_id") @db.Uuid
+  name                  String
+  category              ToolCategory
+  executableName        String       @map("executable_name")
+  defaultBillableStatus Boolean      @default(true) @map("default_billable_status")
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  files        File[]
+  focusEvents  FocusEvent[]
+
+  @@unique([organizationId, executableName])
+  @@unique([organizationId, name])
+  @@map("tools")
+}
+
+/// File METADATA only. File contents are never read or stored.
+model File {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  projectId      String?  @map("project_id") @db.Uuid
+  toolId         String?  @map("tool_id") @db.Uuid
+  fileName       String   @map("file_name")
+  filePath       String   @map("file_path")
+  fileType       String?  @map("file_type")
+  createdById    String?  @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  tool         Tool?        @relation(fields: [toolId], references: [id], onDelete: SetNull)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  focusEvents  FocusEvent[]
+
+  @@unique([organizationId, filePath])
+  @@index([projectId])
+  @@map("files")
+}
+
+/// An activity collector registered to a user (simulated or, later, a real
+/// desktop agent). Agents authenticate with a device token (hash stored).
+model Device {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  name           String
+  platform       String    @default("web-simulator")
+  isSimulated    Boolean   @default(true) @map("is_simulated")
+  isActive       Boolean   @default(true) @map("is_active")
+  tokenHash      String?   @unique @map("token_hash")
+  lastSeenAt     DateTime? @map("last_seen_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rawEvents    RawActivityEvent[]
+  sessions     ActivitySession[]
+  focusEvents  FocusEvent[]
+
+  @@unique([userId, name])
+  @@index([organizationId])
+  @@map("devices")
+}
+
+// ---------------------------------------------------------------------------
+// Event pipeline
+// ---------------------------------------------------------------------------
+
+/// A contiguous activity session reported by one device.
+model ActivitySession {
+  id                 String        @id @db.Uuid
+  organizationId     String        @map("organization_id") @db.Uuid
+  userId             String        @map("user_id") @db.Uuid
+  deviceId           String        @map("device_id") @db.Uuid
+  projectId          String?       @map("project_id") @db.Uuid
+  isSimulated        Boolean       @default(true) @map("is_simulated")
+  status             SessionStatus @default(OPEN)
+  startedAt          DateTime      @map("started_at") @db.Timestamptz(3)
+  lastEventAt        DateTime      @map("last_event_at") @db.Timestamptz(3)
+  endedAt            DateTime?     @map("ended_at") @db.Timestamptz(3)
+  trackedSeconds     Int           @default(0) @map("tracked_seconds")
+  activeSeconds      Int           @default(0) @map("active_seconds")
+  idleSeconds        Int           @default(0) @map("idle_seconds")
+  deepFocusSeconds   Int           @default(0) @map("deep_focus_seconds")
+  contextSwitchCount Int           @default(0) @map("context_switch_count")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device       Device             @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  project      Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  rawEvents    RawActivityEvent[]
+  focusEvents  FocusEvent[]
+
+  @@index([organizationId, userId, startedAt])
+  @@index([status, lastEventAt])
+  @@map("activity_sessions")
+}
+
+/// Raw activity packets exactly as accepted by the ingestion API (JSONB).
+model RawActivityEvent {
+  id               String            @id @default(uuid()) @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  /// Unique identifier generated by the collector; dedupes re-sent events.
+  clientEventId    String            @map("client_event_id") @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  deviceId         String            @map("device_id") @db.Uuid
+  sessionId        String            @map("session_id") @db.Uuid
+  simulationRunId  String?           @map("simulation_run_id") @db.Uuid
+  eventType        ActivityEventType @map("event_type")
+  eventTimestamp   DateTime          @map("event_timestamp") @db.Timestamptz(3)
+  sequence         Int               @default(0)
+  payload          Json              @db.JsonB
+  isSimulated      Boolean           @default(true) @map("is_simulated")
+  processingStatus ProcessingStatus  @default(PENDING) @map("processing_status")
+  attempts         Int               @default(0)
+  receivedAt       DateTime          @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt      DateTime?         @map("processed_at") @db.Timestamptz(3)
+  lastError        String?           @map("last_error")
+
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device        Device              @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  session       ActivitySession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  simulationRun SimulationRun?      @relation(fields: [simulationRunId], references: [id], onDelete: SetNull)
+  inbox         ActivityEventInbox?
+
+  @@unique([organizationId, clientEventId])
+  @@index([organizationId])
+  @@index([userId])
+  @@index([eventTimestamp])
+  @@index([eventType])
+  @@index([processingStatus, receivedAt])
+  @@index([sessionId, eventTimestamp])
+  @@index([simulationRunId])
+  @@map("raw_activity_events")
+}
+
+/// Processing ledger. One row per accepted raw event; makes processing
+/// idempotent (PROCESSED rows are never reprocessed) and recoverable.
+model ActivityEventInbox {
+  id               String           @id @default(uuid()) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  sourceEventId    String           @unique @map("source_event_id") @db.Uuid
+  processingStatus ProcessingStatus @default(PENDING) @map("processing_status")
+  attempts         Int              @default(0)
+  lastError        String?          @map("last_error")
+  enqueuedAt       DateTime?        @map("enqueued_at") @db.Timestamptz(3)
+  receivedAt       DateTime         @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt      DateTime?        @map("processed_at") @db.Timestamptz(3)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sourceEvent  RawActivityEvent @relation(fields: [sourceEventId], references: [id], onDelete: Cascade)
+
+  @@index([processingStatus, receivedAt])
+  @@index([organizationId])
+  @@map("activity_event_inbox")
+}
+
+/// Normalized, non-overlapping activity intervals reconstructed by the worker.
+model FocusEvent {
+  id                  String           @id @default(uuid()) @db.Uuid
+  organizationId      String           @map("organization_id") @db.Uuid
+  userId              String           @map("user_id") @db.Uuid
+  projectId           String?          @map("project_id") @db.Uuid
+  toolId              String?          @map("tool_id") @db.Uuid
+  fileId              String?          @map("file_id") @db.Uuid
+  deviceId            String           @map("device_id") @db.Uuid
+  sessionId           String           @map("session_id") @db.Uuid
+  sourceEventId       String           @map("source_event_id") @db.Uuid
+  startedAt           DateTime         @map("started_at") @db.Timestamptz(3)
+  endedAt             DateTime         @map("ended_at") @db.Timestamptz(3)
+  durationSeconds     Int              @map("duration_seconds")
+  idleDurationSeconds Int              @default(0) @map("idle_duration_seconds")
+  isIdle              Boolean          @default(false) @map("is_idle")
+  isBillable          Boolean          @default(false) @map("is_billable")
+  isContextSwitch     Boolean          @default(false) @map("is_context_switch")
+  isSimulated         Boolean          @default(true) @map("is_simulated")
+  activityCategory    ActivityCategory @map("activity_category")
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  tool         Tool?           @relation(fields: [toolId], references: [id], onDelete: SetNull)
+  file         File?           @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  device       Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  session      ActivitySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, startedAt])
+  @@index([userId, startedAt])
+  @@index([projectId, startedAt])
+  @@index([sessionId])
+  @@index([toolId])
+  @@map("focus_events")
+}
+
+/// Collaboration derived ONLY from overlapping, authorized project-session
+/// metadata. Communication contents are never inspected.
+model CollaborationLink {
+  id                 String   @id @default(uuid()) @db.Uuid
+  organizationId     String   @map("organization_id") @db.Uuid
+  sourceUserId       String   @map("source_user_id") @db.Uuid
+  targetUserId       String   @map("target_user_id") @db.Uuid
+  projectId          String   @map("project_id") @db.Uuid
+  sourceSessionId    String   @map("source_session_id") @db.Uuid
+  targetSessionId    String   @map("target_session_id") @db.Uuid
+  interactionType    String   @map("interaction_type")
+  startedAt          DateTime @map("started_at") @db.Timestamptz(3)
+  endedAt            DateTime @map("ended_at") @db.Timestamptz(3)
+  durationSeconds    Int      @map("duration_seconds")
+  contextSwitchCount Int      @default(0) @map("context_switch_count")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sourceUser   User         @relation("CollabSource", fields: [sourceUserId], references: [id], onDelete: Cascade)
+  targetUser   User         @relation("CollabTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, startedAt])
+  @@index([projectId])
+  @@index([sourceSessionId])
+  @@index([targetSessionId])
+  @@map("collaboration_links")
+}
+
+model SimulationRun {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  actorId        String           @map("actor_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  deviceId       String           @map("device_id") @db.Uuid
+  projectId      String?          @map("project_id") @db.Uuid
+  scenario       String
+  speed          Int              @default(1)
+  status         SimulationStatus @default(RUNNING)
+  startedAt      DateTime         @default(now()) @map("started_at") @db.Timestamptz(3)
+  endedAt        DateTime?        @map("ended_at") @db.Timestamptz(3)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User               @relation("SimulationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  user         User               @relation("SimulationTarget", fields: [userId], references: [id], onDelete: Cascade)
+  rawEvents    RawActivityEvent[]
+
+  @@index([organizationId, actorId, startedAt])
+  @@map("simulation_runs")
+}
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+model BillableAudit {
+  id                          String   @id @default(uuid()) @db.Uuid
+  organizationId              String   @map("organization_id") @db.Uuid
+  projectId                   String   @map("project_id") @db.Uuid
+  userId                      String?  @map("user_id") @db.Uuid
+  reportingPeriodStart        DateTime @map("reporting_period_start") @db.Timestamptz(3)
+  reportingPeriodEnd          DateTime @map("reporting_period_end") @db.Timestamptz(3)
+  totalTrackedSeconds         Int      @map("total_tracked_seconds")
+  totalDeepFocusSeconds       Int      @map("total_deep_focus_seconds")
+  totalActiveWorkSeconds      Int      @map("total_active_work_seconds")
+  totalIdleSeconds            Int      @map("total_idle_seconds")
+  totalFrictionSeconds        Int      @map("total_friction_seconds")
+  totalBillableSeconds        Int      @map("total_billable_seconds")
+  totalNonBillableSeconds     Int      @map("total_non_billable_seconds")
+  approvedBillableSeconds     Int      @default(0) @map("approved_billable_seconds")
+  contextSwitchCount          Int      @map("context_switch_count")
+  billableAmount              Decimal  @map("billable_amount") @db.Decimal(14, 2)
+  budgetUtilizationPercentage Decimal  @map("budget_utilization_percentage") @db.Decimal(7, 2)
+  calculatedAt                DateTime @default(now()) @map("calculated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, reportingPeriodStart])
+  @@index([projectId, reportingPeriodStart])
+  @@map("billable_audits")
+}
+
+model Timesheet {
+  id                   String          @id @default(uuid()) @db.Uuid
+  organizationId       String          @map("organization_id") @db.Uuid
+  userId               String          @map("user_id") @db.Uuid
+  projectId            String          @map("project_id") @db.Uuid
+  reportingPeriodStart DateTime        @map("reporting_period_start") @db.Timestamptz(3)
+  reportingPeriodEnd   DateTime        @map("reporting_period_end") @db.Timestamptz(3)
+  trackedSeconds       Int             @map("tracked_seconds")
+  billableSeconds      Int             @map("billable_seconds")
+  nonBillableSeconds   Int             @map("non_billable_seconds")
+  /// Billable seconds as calculated from activity, before any adjustment.
+  calculatedBillableSeconds Int        @default(0) @map("calculated_billable_seconds")
+  hourlyRate           Decimal         @map("hourly_rate") @db.Decimal(12, 2)
+  currency             String          @default("USD")
+  billableAmount       Decimal         @map("billable_amount") @db.Decimal(14, 2)
+  status               TimesheetStatus @default(DRAFT)
+  notes                String?
+  submittedAt          DateTime?       @map("submitted_at") @db.Timestamptz(3)
+  reviewedById         String?         @map("reviewed_by") @db.Uuid
+  reviewedAt           DateTime?       @map("reviewed_at") @db.Timestamptz(3)
+  rejectionReason      String?         @map("rejection_reason")
+  createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User                @relation("TimesheetOwner", fields: [userId], references: [id], onDelete: Cascade)
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewedBy   User?               @relation("TimesheetReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  adjustments  BillingAdjustment[]
+
+  @@unique([userId, projectId, reportingPeriodStart, reportingPeriodEnd])
+  @@index([organizationId, status])
+  @@index([projectId, status])
+  @@map("timesheets")
+}
+
+/// Append-only history of billable-time changes on a timesheet.
+model BillingAdjustment {
+  id                      String   @id @default(uuid()) @db.Uuid
+  organizationId          String   @map("organization_id") @db.Uuid
+  timesheetId             String   @map("timesheet_id") @db.Uuid
+  previousBillableSeconds Int      @map("previous_billable_seconds")
+  adjustedBillableSeconds Int      @map("adjusted_billable_seconds")
+  reason                  String
+  adjustedById            String   @map("adjusted_by") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  timesheet    Timesheet    @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  adjustedBy   User         @relation(fields: [adjustedById], references: [id], onDelete: Cascade)
+
+  @@index([timesheetId])
+  @@map("billing_adjustments")
+}
+
+/// Append-only audit trail (UPDATE/DELETE revoked from the app role and
+/// blocked by trigger).
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  actorId        String?  @map("actor_id") @db.Uuid
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id")
+  projectId      String?  @map("project_id") @db.Uuid
+  metadata       Json     @default("{}") @db.JsonB
+  requestId      String?  @map("request_id")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@index([projectId])
+  @@map("audit_logs")
+}
